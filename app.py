@@ -3,13 +3,12 @@ import pandas as pd
 import uuid
 import requests
 from io import BytesIO
+import re
 
 app = Flask(__name__)
 
-# Google Sheets configuration
 SHEET_ID = "1Wrqfp12zqPfdpJWnIEWOsIl4cuFJGEpQokeQjoi9Uv8"
-SHEET_NAME = "Automatica"  # Name of the sheet tab
-EXPORT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
+EXCEL_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=xlsx"
 
 # Map day names to numbers
 DAY_MAP = {
@@ -25,32 +24,33 @@ DAY_MAP = {
 @app.route("/timetable", methods=["GET"])
 def get_timetable():
     try:
-        # Download CSV data from Google Sheets
-        response = requests.get(EXPORT_URL)
-        response.raise_for_status()  # Check for HTTP errors
-        
-        # Read CSV data into DataFrame
-        df = pd.read_csv(BytesIO(response.content))
-        
-        # Process data
-        timetable_data = []
-        for _, row in df.iterrows():
-            if pd.isna(row.get("Nume", "")):
-                continue
-                
-            timetable_data.append({
-                "id": str(uuid.uuid4()),
-                "title": row["Nume"],
-                "location": row["Locatie"],
-                "startTime": f"{int(row['startTime'])}:00",
-                "endTime": f"{int(row['endTime'])}:00",
-                "day": DAY_MAP.get(str(row["day"]).strip(), 1),
-                "courseType": row["courseType"],
-                "teacher": row["teacher"],
-            })
-            
-        return jsonify(timetable_data)
-        
+        # Download Excel file from Google Sheets
+        response = requests.get(EXCEL_URL)
+        response.raise_for_status()
+        # Load workbook from bytes
+        xls = pd.ExcelFile(BytesIO(response.content))
+
+        all_events = []
+        for sheet_name in xls.sheet_names:
+            # Only process sheets whose name is a year (e.g., "1", "2", "3", "4")
+            if re.fullmatch(r"\d+", sheet_name.strip()):
+                year_of_study = int(sheet_name.strip())
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                for _, row in df.iterrows():
+                    if pd.isna(row.get("Nume", "")):
+                        continue
+                    all_events.append({
+                        "id": str(uuid.uuid4()),
+                        "title": row["Nume"],
+                        "location": row["Locatie"],
+                        "startTime": f"{int(row['startTime']):02d}:00",
+                        "endTime": f"{int(row['endTime']):02d}:00",
+                        "day": DAY_MAP.get(str(row["day"]).strip(), 1),
+                        "courseType": row["courseType"],
+                        "teacher": row["teacher"],
+                        "year": year_of_study
+                    })
+        return jsonify(all_events)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
